@@ -156,7 +156,7 @@ const handleBackToCategories = () => {
 // 播放或进入文件夹  
 const handlePlay = (item: EmbyItem) => {  
   if (item.vod_tag === 'folder') {  
-    // 进入文件夹时添加到面包屑  
+    // 进入文件夹  
     setBreadcrumbs(prev => [...prev, { id: item.vod_id, name: item.vod_name }]);  
     setActiveCategory(item.vod_id);  
     setItems([]);  
@@ -164,10 +164,10 @@ const handlePlay = (item: EmbyItem) => {
     setSearchMode(false);  
     loadItems(true);  
   } else {  
-    // 正常播放  
-    router.push(`/play?source=emby&id=${item.vod_id}&title=${encodeURIComponent(item.vod_name)}`);  
+    // 跳转到 Emby 专用播放页面  
+    router.push(`/emby/play?id=${item.vod_id}&title=${encodeURIComponent(item.vod_name)}`);  
   }  
-}; 
+};
 // 添加 handleBreadcrumbClick 函数  
 const handleBreadcrumbClick = (index: number) => {  
   const newBreadcrumbs = breadcrumbs.slice(0, index + 1);  
