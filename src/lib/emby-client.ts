@@ -21,7 +21,7 @@ interface EmbyItem {
   Id: string;  
   Name: string;  
   Type: string;  
-  CollectionType?: string;  // 添加这一行  
+  CollectionType?: string;
   SeriesName?: string;  
   SeriesId?: string;  
   SeasonName?: string;  
@@ -31,7 +31,8 @@ interface EmbyItem {
   Overview?: string;  
   ImageTags?: {  
     Primary?: string;  
-  };  
+  };
+  ParentId?: string;
 }  
   
 interface EmbyMediaSource {  
@@ -182,8 +183,31 @@ export class EmbyClient {
     });  
   
     return result;  
-  }  
+  }
   
+/**  
+ * 获取文件夹内容  
+ */  
+async getFolderItems(folderId: string, page: number = 1) {  
+  const pageSize = 60;  
+  const startIndex = (page - 1) * pageSize;  
+    
+  // 解析ID: {serverId}-{embyFolderId}  
+  const parts = folderId.split('-');  
+  const embyFolderId = parts[1];  
+    
+  const data = await this.fetch(  
+    `/emby/Users/${this.userId}/Items?ParentId=${embyFolderId}&SortBy=SortName&SortOrder=Ascending&Recursive=false&Fields=BasicSyncInfo,PrimaryImageAspectRatio,ProductionYear,CommunityRating&ImageTypeLimit=1&EnableImageTypes=Primary,Backdrop,Thumb&StartIndex=${startIndex}&Limit=${pageSize}`  
+  );  
+    
+  return {  
+    list: data.Items.map((item: EmbyItem) => this.formatMovieDetail(item)),  
+    page,  
+    pagecount: Math.ceil(data.TotalRecordCount / pageSize),  
+    total: data.TotalRecordCount,  
+    limit: pageSize  
+  };  
+}  
   /**  
    * 内容列表 - 对应 list()  
    */  
@@ -398,7 +422,13 @@ export class EmbyClient {
       vod_director: this.config.name,  
       vod_remarks: item.CommunityRating?.toString() || '',  
       vod_year: item.ProductionYear?.toString()  
-    };  
+    }; 
+  // 添加文件夹类型检测  
+  if (['Folder', 'CollectionFolder', 'MusicAlbum', 'BoxSet', 'Season'].includes(item.Type)) {  
+    result.vod_tag = 'folder';  
+  }  
+    
+  return result;  	
   }  
   
   /**  

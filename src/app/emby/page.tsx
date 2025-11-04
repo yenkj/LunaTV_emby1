@@ -22,7 +22,8 @@ interface EmbyItem {
   vod_name: string;  
   vod_pic?: string;  
   vod_year?: string;  
-  vod_remarks?: string;  
+  vod_remarks?: string;
+  vod_tag?: string;
 }  
   
 export default function EmbyPage() {  
@@ -43,7 +44,8 @@ export default function EmbyPage() {
   // 搜索状态  
   const [searchMode, setSearchMode] = useState(false);  
   const [searchQuery, setSearchQuery] = useState('');  
-  
+  // 在现有状态声明后添加  
+  const [breadcrumbs, setBreadcrumbs] = useState<Array<{id: string, name: string}>>([]);  
   // 加载服务器列表  
   useEffect(() => {  
     const loadServers = async () => {  
@@ -82,47 +84,56 @@ export default function EmbyPage() {
   }, [activeServer]);  
   
   // 加载内容列表  
-  const loadItems = useCallback(async (reset: boolean = false) => {  
-    if (!activeServer || (!activeCategory && !searchMode)) return;  
+ const loadItems = useCallback(async (reset: boolean = false) => {  
+  if (!activeServer || (!activeCategory && !searchMode)) return;  
       
-    setLoading(true);  
-    try {  
-      const currentPage = reset ? 1 : page;  
-      let url = `/api/emby/browse?server=${activeServer}&pg=${currentPage}`;  
+  setLoading(true);  
+  try {  
+    const currentPage = reset ? 1 : page;  
+    let url = `/api/emby/browse?server=${activeServer}&pg=${currentPage}`;  
         
-      if (searchMode && searchQuery) {  
-        url += `&wd=${encodeURIComponent(searchQuery)}`;  
-      } else if (activeCategory) {  
+    if (searchMode && searchQuery) {  
+      url += `&wd=${encodeURIComponent(searchQuery)}`;  
+    } else if (activeCategory) {  
+      // 检查是否是文件夹ID (包含两个'-')  
+      const parts = activeCategory.split('-');  
+      if (parts.length > 2) {  
+        // 这是文件夹ID,使用 folder 参数  
+        url += `&folder=${activeCategory}`;  
+      } else {  
+        // 这是分类ID,使用 t 参数  
         url += `&t=${activeCategory}`;  
       }  
-        
-      const response = await fetch(url);  
-      const data = await response.json();  
-        
-      if (reset) {  
-        setItems(data.list || []);  
-        setPage(1);  
-      } else {  
-        setItems(prev => [...prev, ...(data.list || [])]);  
-      }  
-        
-      setHasMore(data.pagecount ? currentPage < data.pagecount : false);  
-      if (!reset) setPage(prev => prev + 1);  
-    } catch (error) {  
-      console.error('加载内容失败:', error);  
-    } finally {  
-      setLoading(false);  
     }  
-  }, [activeServer, activeCategory, searchMode, searchQuery, page]);  
-  
-  // 切换服务器时重新加载  
-  useEffect(() => {  
-    if (activeServer) {  
-      setItems([]);  
+        
+    const response = await fetch(url);  
+    const data = await response.json();  
+        
+    if (reset) {  
+      setItems(data.list || []);  
       setPage(1);  
-      loadItems(true);  
+    } else {  
+      setItems(prev => [...prev, ...(data.list || [])]);  
     }  
-  }, [activeServer, activeCategory]);  
+        
+    setHasMore(data.pagecount ? currentPage < data.pagecount : false);  
+    if (!reset) setPage(prev => prev + 1);  
+  } catch (error) {  
+    console.error('加载内容失败:', error);  
+  } finally {  
+    setLoading(false);  
+  }  
+}, [activeServer, activeCategory, searchMode, searchQuery, page]);
+  
+// 修改现有的 useEffect  
+useEffect(() => {  
+  if (activeServer) {  
+    setItems([]);  
+    setPage(1);  
+    setBreadcrumbs([]); // 添加这一行  
+    loadItems(true);  
+  }  
+}, [activeServer, activeCategory]);
   
   // 搜索处理  
   const handleSearch = () => {  
@@ -133,19 +144,45 @@ export default function EmbyPage() {
   };  
   
   // 返回分类浏览  
-  const handleBackToCategories = () => {  
-    setSearchMode(false);  
-    setSearchQuery('');  
+const handleBackToCategories = () => {  
+  setSearchMode(false);  
+  setSearchQuery('');  
+  setItems([]);  
+  setPage(1);  
+  setBreadcrumbs([]); // 添加这一行  
+  loadItems(true);  
+};
+  
+// 播放或进入文件夹  
+const handlePlay = (item: EmbyItem) => {  
+  if (item.vod_tag === 'folder') {  
+    // 进入文件夹时添加到面包屑  
+    setBreadcrumbs(prev => [...prev, { id: item.vod_id, name: item.vod_name }]);  
+    setActiveCategory(item.vod_id);  
     setItems([]);  
     setPage(1);  
+    setSearchMode(false);  
     loadItems(true);  
-  };  
-  
-  // 播放视频  
-  const handlePlay = (item: EmbyItem) => {  
+  } else {  
+    // 正常播放  
     router.push(`/play?source=emby&id=${item.vod_id}&title=${encodeURIComponent(item.vod_name)}`);  
-  };  
-  
+  }  
+}; 
+// 添加 handleBreadcrumbClick 函数  
+const handleBreadcrumbClick = (index: number) => {  
+  const newBreadcrumbs = breadcrumbs.slice(0, index + 1);  
+  setBreadcrumbs(newBreadcrumbs);  
+    
+  if (index === -1) {  
+    setActiveCategory(categories[0]?.type_id || '');  
+  } else {  
+    setActiveCategory(newBreadcrumbs[index].id);  
+  }  
+    
+  setItems([]);  
+  setPage(1);  
+  loadItems(true);  
+};    
   return (  
     <PageLayout>  
       <div className="container mx-auto px-4 py-6">  
@@ -202,7 +239,31 @@ export default function EmbyPage() {
             </button>  
           )}  
         </div>  
-  
+
+{/* 面包屑导航 */}  
+{!searchMode && breadcrumbs.length > 0 && (  
+  <div className="mb-4 flex items-center gap-2 text-sm text-gray-600 dark:text-gray-400 overflow-x-auto">  
+    <button  
+      onClick={() => handleBreadcrumbClick(-1)}  
+      className="hover:text-blue-600 dark:hover:text-blue-400 transition-colors"  
+    >  
+      首页  
+    </button>  
+    {breadcrumbs.map((crumb, index) => (  
+      <div key={crumb.id} className="flex items-center gap-2">  
+        <span>/</span>  
+        <button  
+          onClick={() => handleBreadcrumbClick(index)}  
+          className={`hover:text-blue-600 dark:hover:text-blue-400 transition-colors whitespace-nowrap ${  
+            index === breadcrumbs.length - 1 ? 'font-semibold text-gray-900 dark:text-gray-100' : ''  
+          }`}  
+        >  
+          {crumb.name}  
+        </button>  
+      </div>  
+    ))}  
+  </div>  
+)}  
         {/* 分类选择 */}  
         {!searchMode && categories.length > 0 && (  
           <div className="mb-4 flex gap-2 overflow-x-auto">  
