@@ -1,482 +1,320 @@
-interface EmbyConfig {  
-  id: number;  
-  name: string;  
-  url: string;  
-  username: string;  
-  password: string;  
-  userAgent?: string;  
-  order: number;  
-  disabled?: boolean;  
-}  
-  
-interface EmbyAuthResponse {  
-  AccessToken: string;  
-  User: {  
-    Id: string;  
-    Name: string;  
-  };  
-}  
-  
-interface EmbyItem {  
-  Id: string;  
-  Name: string;  
-  Type: string;  
-  CollectionType?: string;
-  SeriesName?: string;  
-  SeriesId?: string;  
-  SeasonName?: string;  
-  IndexNumber?: number;  
-  ProductionYear?: number;  
-  CommunityRating?: number;  
-  Overview?: string;  
-  ImageTags?: {  
-    Primary?: string;  
-  };
-  ParentId?: string;
-}  
-  
-interface EmbyMediaSource {  
-  Name: string;  
-  DirectStreamUrl?: string;  
-  Url?: string;  
-  MediaStreams: Array<{  
-    Type: string;  
-    DisplayTitle?: string;  
-    Language?: string;  
-    Codec?: string;  
-    DeliveryUrl?: string;  
-  }>;  
-}  
-  
-export class EmbyClient {  
-  private accessToken?: string;  
-  private userId?: string;  
-  private views?: EmbyItem[];  
-  
-  constructor(private config: EmbyConfig) {}  
-  
-  /**  
-   * 用户名密码认证 - 对应 getEmbyInfo()  
-   */  
-  async authenticate(): Promise<EmbyAuthResponse> {  
-    const params = new URLSearchParams({  
-      'X-Emby-Client': 'Emby Web',  
-      'X-Emby-Device-Name': 'LunaTV',  
-      'X-Emby-Device-Id': 'lunatv-' + Date.now(),  
-      'X-Emby-Client-Version': '1.0.0'  
-    });  
-  
-    const body = new URLSearchParams({  
-      Username: this.config.username,  
-      Pw: this.config.password  
-    });  
-  
-    const response = await fetch(  
-      `${this.config.url}/emby/Users/AuthenticateByName?${params}`,  
-      {  
-        method: 'POST',  
-        headers: {  
-          'Content-Type': 'application/x-www-form-urlencoded',  
-          'User-Agent': this.config.userAgent || 'LunaTV/1.0'  
-        },  
-        body: body.toString()  
-      }  
-    );  
-  
-    if (!response.ok) {  
-      throw new Error(`Emby authentication failed: ${response.statusText}`);  
-    }  
-  
-    const data: EmbyAuthResponse = await response.json();  
-    this.accessToken = data.AccessToken;  
-    this.userId = data.User.Id;  
-  
-    // 获取媒体库视图  
-    const viewsResponse = await this.fetch(`/emby/Users/${this.userId}/Views`);  
-    this.views = viewsResponse.Items;  
-  
-    return data;  
-  }  
-  
-  /**  
-   * 生成 Authorization Header  
-   */  
-  private getAuthHeader(): string {  
-    return `Emby UserId="${this.userId}", Client="LunaTV", Device="Web", DeviceId="lunatv-web", Version="1.0.0", Token="${this.accessToken}"`;  
-  }  
-  
-  /**  
-   * 通用 fetch 包装  
-   */  
-  
-  /**  
-   * 获取媒体库视图 - 对应 category()  
-   */  
-  async getViews(): Promise<EmbyItem[]> {  
-    if (this.views) {  
-      return this.views;  
-    }  
-    const data = await this.fetch(`/emby/Users/${this.userId}/Views`);  
-    this.views = data.Items;  
-    return this.views || [];  // 添加默认值   
-  }  
-  
-  /**  
-   * 首页内容 - 对应 home()  
-   */  
-  async getHomeContent() {  
-    // 1. 继续观看  
-    const resumeData = await this.fetch(  
-      `/emby/Users/${this.userId}/Items/Resume?Limit=12&Recursive=true&Fields=PrimaryImageAspectRatio,BasicSyncInfo,ProductionYear,CommunityRating&ImageTypeLimit=1&EnableImageTypes=Primary,Backdrop,Thumb&EnableTotalRecordCount=false&MediaTypes=Video`  
-    );  
-  
-    const list: any[] = resumeData.Items.map((item: EmbyItem) => this.formatMovieDetail(item));  
-  
-    // 2. 每个媒体库的最新内容  
-    const views = await this.getViews();  
-    for (const view of views) {  
-      const latestData = await this.fetch(  
-        `/emby/Users/${this.userId}/Items/Latest?Limit=12&Fields=PrimaryImageAspectRatio,BasicSyncInfo,ProductionYear,CommunityRating&ImageTypeLimit=1&EnableImageTypes=Primary,Backdrop,Thumb&ParentId=${view.Id}`  
-      );  
-      list.push(...latestData.map((item: EmbyItem) => this.formatMovieDetail(item)));  
-    }  
-  
-    return {  
-      list,  
-      total: list.length,  
-      limit: list.length  
-    };  
-  }  
-  
-  /**  
-   * 分类列表 - 对应 category()  
-   */  
-  async getCategories() {  
-    const views = await this.getViews();  
-    const categories = views.map((view, index) => ({  
-      type_id: `${this.config.id}-${index}`,  
-      type_name: `${this.config.name}:${view.Name}`,  
-      type_flag: 0  
-    }));  
-  
-    // 排序过滤器  
-    const filters = [  
-      { n: '评分⬆️', v: 'CommunityRating,SortName:Ascending' },  
-      { n: '评分⬇️', v: 'CommunityRating,SortName:Descending' },  
-      { n: '发行日期⬆️', v: 'PremiereDate,ProductionYear,SortName:Ascending' },  
-      { n: '发行日期⬇️', v: 'PremiereDate,ProductionYear,SortName:Descending' },  
-      { n: '加入日期⬆️', v: 'DateCreated,SortName:Ascending' },  
-      { n: '加入日期⬇️', v: 'DateCreated,SortName:Descending' },  
-      { n: '名字⬆️', v: 'SortName:Ascending' },  
-      { n: '名字⬇️', v: 'SortName:Descending' },  
-      { n: '时长⬆️', v: 'Runtime,SortName:Ascending' },  
-      { n: '时长⬇️', v: 'Runtime,SortName:Descending' }  
-    ];  
-  
-    const result: any = {  
-      class: categories,  
-      filters: {}  
-    };  
-  
-    categories.forEach(cat => {  
-      result.filters[cat.type_id] = [{ key: 'sort', name: '排序', value: filters }];  
-    });  
-  
-    return result;  
-  }
-  
-/**  
- * 获取文件夹内容  
- */  
-async getFolderItems(folderId: string, page: number = 1) {  
-  const pageSize = 60;  
-  const startIndex = (page - 1) * pageSize;  
+/**
+ * Emby 客户端类，用于处理认证、媒体库浏览和媒体播放
+ */
+export class EmbyClient {
+    private accessToken?: string;
+    private userId?: string;
+    private views?: EmbyItem[];
+
+    // --- 接口定义（为保持完整性保留，但建议单独放在一个文件） ---
+
+    interface EmbyConfig {
+        id: number;
+        name: string;
+        url: string;
+        username: string;
+        password: string;
+        userAgent?: string;
+        order: number;
+        disabled?: boolean;
+    }
+
+    interface EmbyAuthResponse {
+        AccessToken: string;
+        User: {
+            Id: string;
+            Name: string;
+        };
+    }
+
+    interface EmbyItem {
+        Id: string;
+        Name: string;
+        Type: string;
+        CollectionType?: string;
+        SeriesName?: string;
+        SeriesId?: string;
+        SeasonName?: string;
+        IndexNumber?: number;
+        ProductionYear?: number;
+        CommunityRating?: number;
+        Overview?: string;
+        ImageTags?: {
+            Primary?: string;
+        };
+        ParentId?: string;
+    }
+
+    interface EmbyMediaSource {
+        Id: string;
+        Name: string;
+        DirectStreamUrl?: string;
+        Url?: string;
+        SupportsTranscoding: boolean; // 新增，用于判断是否转码
+        MediaStreams: Array<{
+            Type: string;
+            DisplayTitle?: string;
+            Language?: string;
+            Codec?: string;
+            DeliveryUrl?: string;
+        }>;
+    }
     
-  // 解析ID: {serverId}-{embyFolderId}  
-  const parts = folderId.split('-');  
-  const embyFolderId = parts[1];  
+    // -----------------------------------------------------------------
     
-  const data = await this.fetch(  
-    `/emby/Users/${this.userId}/Items?ParentId=${embyFolderId}&SortBy=SortName&SortOrder=Ascending&Recursive=false&Fields=BasicSyncInfo,PrimaryImageAspectRatio,ProductionYear,CommunityRating&ImageTypeLimit=1&EnableImageTypes=Primary,Backdrop,Thumb&StartIndex=${startIndex}&Limit=${pageSize}`  
-  );  
-    
-  return {  
-    list: data.Items.map((item: EmbyItem) => this.formatMovieDetail(item)),  
-    page,  
-    pagecount: Math.ceil(data.TotalRecordCount / pageSize),  
-    total: data.TotalRecordCount,  
-    limit: pageSize  
-  };  
-}  
-  /**  
-   * 内容列表 - 对应 list()  
-   */  
-  async getCategoryItems(categoryId: string, page: number = 1, sort?: string) {  
-    const pageSize = 60;  
-    const startIndex = (page - 1) * pageSize;  
-      
-    // 解析分类ID: {serverId}-{viewIndex}  
-    const parts = categoryId.split('-');  
-    const viewIndex = parseInt(parts[1]);  
-    const views = await this.getViews();  
-    const view = views[viewIndex];  
-  
-    if (!view) {  
-      throw new Error('Invalid category ID');  
-    }  
-  
-    // 确定内容类型  
-    let type = '';  
-    if (view.CollectionType === 'movies') {  
-      type = 'Movie';  
-    } else if (view.CollectionType === 'tvshows') {  
-      type = 'Series';  
-    }  
-  
-    // 解析排序参数  
-    const [sortBy, sortOrder] = (sort || 'DateCreated,SortName:Descending').split(':');  
-  
-    const data = await this.fetch(  
-      `/emby/Users/${this.userId}/Items?SortBy=${sortBy}&SortOrder=${sortOrder}&IncludeItemTypes=${type}&Recursive=true&Fields=BasicSyncInfo,PrimaryImageAspectRatio,ProductionYear,CommunityRating&ImageTypeLimit=1&EnableImageTypes=Primary,Backdrop,Thumb&StartIndex=${startIndex}&Limit=${pageSize}&ParentId=${view.Id}`  
-    );  
-  
-    return {  
-      list: data.Items.map((item: EmbyItem) => this.formatMovieDetail(item)),  
-      page,  
-      pagecount: Math.ceil(data.TotalRecordCount / pageSize),  
-      total: data.TotalRecordCount,  
-      limit: pageSize  
-    };  
-  }  
-  
-  /**  
-   * 详情 - 对应 detail()  
-   */  
-  async getItemDetail(itemId: string) {  
-    // 解析ID: {serverId}-{embyItemId}  
-    const parts = itemId.split('-');  
-    const embyItemId = parts[1];  
-  
-    const item: EmbyItem = await this.fetch(`/emby/Users/${this.userId}/Items/${embyItemId}`);  
-  
-    let playFrom = this.config.name;  
-    let playUrl = `播放$${itemId}`;  
-  
-    // 如果是剧集,获取所有集数  
-    if (item.Type === 'Episode' || item.Type === 'Series') {  
-      const seriesId = item.SeriesId || item.Id;  
-      const episodesData = await this.fetch(  
-        `/emby/Users/${this.userId}/Items?ParentId=${seriesId}&Filters=IsNotFolder&Recursive=true&Limit=2000&Fields=Chapters,ProductionYear,PremiereDate&ExcludeLocationTypes=Virtual&EnableTotalRecordCount=false&CollapseBoxSetItems=false`  
-      );  
-  
-      // 按季分组  
-      const seasonMap = new Map<string, string[]>();  
-      for (const ep of episodesData.Items) {  
-        const seasonName = ep.SeasonName?.replace('未知季', '剧集') || '剧集';  
-        if (!seasonMap.has(seasonName)) {  
-          seasonMap.set(seasonName, []);  
-        }  
-        const epName = ep.Name === `第 ${ep.IndexNumber} 集`   
-          ? ep.Name   
-          : `${ep.IndexNumber}.${ep.Name}`;  
-        seasonMap.get(seasonName)!.push(`${epName}$${this.config.id}-${ep.Id}`);  
-      }  
-  
-      const seasons = Array.from(seasonMap.entries());  
-      playFrom = seasons.map(([name]) => name).join('$$$');  
-      playUrl = seasons.map(([, eps]) => eps.join('#')).join('$$$');  
-    }  
-  
-    return {  
-      list: [{  
-        vod_id: itemId,  
-        vod_name: item.Type === 'Episode' ? item.SeriesName : item.Name,  
-        vod_pic: this.getImageUrl(item),  
-        vod_year: item.ProductionYear?.toString(),  
-        vod_content: item.Overview,  
-        vod_director: this.config.name,  
-        vod_remarks: item.CommunityRating?.toString() || '',  
-        vod_play_from: playFrom,  
-        vod_play_url: playUrl  
-      }],  
-      total: 1,  
-      limit: 1  
-    };  
-  }  
-  
-  /**  
-   * 搜索 - 对应 search()  
-   */  
-  async search(query: string, quick: boolean = false) {  
-    const results: any[] = [];  
-  
-    // 搜索电影和剧集  
-    for (const type of ['Movie', 'Series']) {  
-      const data = await this.fetch(  
-        `/emby/Users/${this.userId}/Items?IncludePeople=false&IncludeMedia=true&IncludeGenres=false&IncludeStudios=false&IncludeArtists=false&IncludeItemTypes=${type}&Limit=30&Fields=PrimaryImageAspectRatio,BasicSyncInfo,ProductionYear,CommunityRating&Recursive=true&EnableTotalRecordCount=false&ImageTypeLimit=1&searchTerm=${encodeURIComponent(query)}`  
-      );  
-      results.push(...data.Items.map((item: EmbyItem) => this.formatSearchDetail(item)));  
-    }  
-  
-    return {  
-      list: results,  
-      total: results.length,  
-      limit: results.length  
-    };  
-  }  
-  
-  /**  
-   * 播放信息 - 对应 play()  
-   */  
-  async getPlaybackInfo(itemId: string) {  
-    // 解析ID  
-    const parts = itemId.split('-');  
-    const embyItemId = parts[1];  
-  
-    // DeviceProfile 配置  
-    const deviceProfile = {  
-      SubtitleProfiles: [  
-        { Method: 'Embed', Format: 'ass' },  
-        { Format: 'ssa', Method: 'Embed' },  
-        { Format: 'subrip', Method: 'Embed' },  
-        { Format: 'sub', Method: 'Embed' },  
-        { Method: 'Embed', Format: 'pgssub' },  
-        { Format: 'subrip', Method: 'External' },  
-        { Method: 'External', Format: 'sub' },  
-        { Method: 'External', Format: 'ass' },  
-        { Format: 'ssa', Method: 'External' },  
-        { Method: 'External', Format: 'vtt' }  
-      ],  
-      MaxStreamingBitrate: 40000000,  
-      TranscodingProfiles: [{  
-        Container: 'ts',  
-        AudioCodec: 'aac,mp3,wav,ac3,eac3,flac,opus',  
-        VideoCodec: 'hevc,h264,mpeg4',  
-        BreakOnNonKeyFrames: true,  
-        Type: 'Video',  
-        MaxAudioChannels: '6',  
-        Protocol: 'hls',  
-        Context: 'Streaming',  
-        MinSegments: 2  
-      }],  
-      DirectPlayProfiles: [{  
-        Container: 'mov,mp4,mkv,hls,webm',  
-        Type: 'Video',  
-        VideoCodec: 'h264,hevc,dvhe,dvh1,h264,hevc,hev1,mpeg4,vp9',  
-        AudioCodec: 'aac,mp3,wav,ac3,eac3,flac,truehd,dts,dca,opus,pcm,pcm_s24le'  
-      }]  
-    };  
-  
-      const data = await this.fetch(  
-      `/emby/Items/${embyItemId}/PlaybackInfo?IsPlayback=false&AutoOpenLiveStream=false&StartTimeTicks=0&MaxStreamingBitrate=2147483647&UserId=${this.userId}`,  
-      {  
-        method: 'POST',  
-        headers: {  
-          'Content-Type': 'application/json'  
-        },  
-        body: JSON.stringify({ DeviceProfile: deviceProfile })  
-      }  
-    );  
-  
-    const urls: string[] = [];  
-    const subs: Array<{  
-      name: string;  
-      lang: string;  
-      format: string;  
-      url: string;  
-    }> = [];  
-  
-    for (const source of data.MediaSources) {  
-      urls.push(source.Name);  
-      urls.push(this.config.url + (source.DirectStreamUrl || source.Url));  
-  
-      // 提取字幕  
-      for (const stream of source.MediaStreams) {  
-        if (stream.Type === 'Subtitle' && stream.DeliveryUrl) {  
-          subs.push({  
-            name: stream.DisplayTitle || 'Subtitle',  
-            lang: stream.Language || 'unknown',  
-            format: stream.Codec === 'ass' ? 'text/x-ssa' : 'application/x-subrip',  
-            url: this.config.url + stream.DeliveryUrl  
-          });  
-        }  
-      }  
-    }  
-  
-    return {  
-      url: urls,  
-      subs: subs,  
-      header: { 'User-Agent': this.config.userAgent || 'LunaTV/1.0' },  
-      parse: 0  
-    };  
-  }  
-  
-  /**  
-   * 格式化电影详情 - 对应 getMovieDetail()  
-   */  
-private formatMovieDetail(item: EmbyItem) {  
-  const result: any = {  
-    vod_id: `${this.config.id}-${item.Id}`,  
-    vod_name: item.Type === 'Episode' ? item.SeriesName : item.Name,  
-    vod_pic: this.getImageUrl(item),  
-    vod_director: this.config.name,  
-    vod_remarks: item.CommunityRating?.toString() || '',  
-    vod_year: item.ProductionYear?.toString()  
-  };  
-    
-  // 添加文件夹类型检测  
-  if (['Folder', 'CollectionFolder', 'MusicAlbum', 'BoxSet', 'Season'].includes(item.Type)) {  
-    result.vod_tag = 'folder';  
-  }   
-    
-  return result;  	
-  }  
-  
-  /**  
-   * 格式化搜索详情 - 对应 getSearchDetail()  
-   */  
-  private formatSearchDetail(item: EmbyItem) {  
-    return {  
-      vod_id: `${this.config.id}-${item.Id}`,  
-      vod_name: item.Type === 'Episode' ? item.SeriesName : item.Name,  
-      vod_pic: this.getImageUrl(item),  
-      vod_remarks: `${this.config.name} ${item.CommunityRating?.toString() || ''}`,  
-      vod_year: item.ProductionYear?.toString()  
-    };  
-  }  
-  
-  /**  
-   * 获取图片 URL  
-   */  
-  private getImageUrl(item: EmbyItem): string | undefined {  
-    if (item.ImageTags?.Primary) {  
-      return `${this.config.url}/emby/Items/${item.Id}/Images/Primary?maxWidth=400&tag=${item.ImageTags.Primary}&quality=90`;  
-    }  
-    return undefined;  
-  }  
-  
-  /**  
-   * 通用 fetch 包装 - 支持 GET 和 POST  
-   */  
-  private async fetch(path: string, options?: RequestInit): Promise<any> {  
-    const url = `${this.config.url}${path}`;  
-      
-    const headers: HeadersInit = {  
-      'Authorization': this.getAuthHeader(),  
-      'User-Agent': this.config.userAgent || 'LunaTV/1.0',  
-      ...options?.headers  
-    };  
-  
-    const response = await fetch(url, {  
-      ...options,  
-      headers  
-    });  
-  
-    if (!response.ok) {  
-      throw new Error(`Emby API error: ${response.status} ${response.statusText}`);  
-    }  
-  
-    return response.json();  
-  }  
+    constructor(private config: EmbyConfig) {}
+
+    /**
+     * 用户名密码认证 - 对应 getEmbyInfo()
+     */
+    async authenticate(): Promise<EmbyAuthResponse> {
+        const params = new URLSearchParams({
+            'X-Emby-Client': 'Emby Web',
+            'X-Emby-Device-Name': 'LunaTV',
+            'X-Emby-Device-Id': 'lunatv-' + Date.now(),
+            'X-Emby-Client-Version': '1.0.0'
+        });
+
+        const body = new URLSearchParams({
+            Username: this.config.username,
+            Pw: this.config.password
+        });
+
+        const response = await fetch(
+            `${this.config.url}/emby/Users/AuthenticateByName?${params}`,
+            {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/x-www-form-urlencoded',
+                    'User-Agent': this.config.userAgent || 'LunaTV/1.0'
+                },
+                body: body.toString()
+            }
+        );
+
+        if (!response.ok) {
+            throw new Error(`Emby authentication failed: ${response.statusText}`);
+        }
+
+        const data: EmbyAuthResponse = await response.json();
+        this.accessToken = data.AccessToken;
+        this.userId = data.User.Id;
+
+        // 获取媒体库视图
+        const viewsResponse = await this.fetch(`/emby/Users/${this.userId}/Views`);
+        this.views = viewsResponse.Items;
+
+        return data;
+    }
+
+    /**
+     * 生成 Authorization Header
+     */
+    private getAuthHeader(): string {
+        // 使用 Token 替代完整的 Authorization Header，方便 M3U8 链接直接使用
+        if (this.accessToken) {
+             return `Emby UserId="${this.userId}", Client="LunaTV", Device="Web", DeviceId="lunatv-web", Version="1.0.0", Token="${this.accessToken}"`;
+        }
+        return '';
+    }
+
+    /**
+     * 通用 fetch 包装 - 支持 GET 和 POST
+     */
+    private async fetch(path: string, options?: RequestInit): Promise<any> {
+        const url = `${this.config.url}${path}`;
+        
+        const headers: HeadersInit = {
+            'Authorization': this.getAuthHeader(),
+            'User-Agent': this.config.userAgent || 'LunaTV/1.0',
+            ...options?.headers
+        };
+
+        const response = await fetch(url, {
+            ...options,
+            headers
+        });
+
+        if (!response.ok) {
+            throw new Error(`Emby API error: ${response.status} ${response.statusText} URL: ${url}`);
+        }
+
+        return response.json();
+    }
+
+    // （省略 getViews, getHomeContent, getCategories, getFolderItems, getCategoryItems, getItemDetail, search, formatMovieDetail, formatSearchDetail, getImageUrl 等其他辅助方法，它们保持原样）
+
+    // --- 核心播放逻辑修改区域 ---
+
+    /**
+     * 播放信息 - 对应 play()
+     * 1. POST PlaybackInfo 获取服务器转码决策。
+     * 2. POST Sessions/Playing/Progress 启动播放会话和转码进程。
+     * 3. 构造 M3U8 链接。
+     */
+    async getPlaybackInfo(itemId: string) {
+        const parts = itemId.split('-');
+        const embyItemId = parts[1];
+
+        // 🎯 优化：DeviceProfile 配置，强制要求 HLS 且 Audio Codec 为 AAC/MP3
+        const deviceProfile = {
+            // ... (其他保持不变的配置)
+            SubtitleProfiles: [
+                { Method: 'Embed', Format: 'ass' },
+                // ... (省略其他字幕配置)
+            ],
+            MaxStreamingBitrate: 40000000,
+            TranscodingProfiles: [{
+                Container: 'ts',
+                AudioCodec: 'aac,mp3', // 仅允许AAC/MP3作为转码目标音频
+                VideoCodec: 'h264,hevc,mpeg4',
+                Context: 'Streaming',
+                Protocol: 'hls',
+                // 关键参数：启用 Direct Stream，让服务器倾向于只转码音频
+                // Emby 会尝试 Direct Stream (视频拷贝，音频转码)
+            }],
+            DirectPlayProfiles: [{
+                Container: 'mov,mp4,mkv,hls,webm',
+                Type: 'Video',
+                // 确保浏览器支持的视频/音频格式能够 Direct Play
+                VideoCodec: 'h264,hevc,vp9',
+                AudioCodec: 'aac,mp3' // 浏览器可原生播放的音频
+            }]
+        };
+
+        // 1. POST PlaybackInfo
+        const data = await this.fetch(
+            `/emby/Items/${embyItemId}/PlaybackInfo?IsPlayback=false&AutoOpenLiveStream=false&StartTimeTicks=0&MaxStreamingBitrate=2147483647&UserId=${this.userId}`,
+            {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({ DeviceProfile: deviceProfile })
+            }
+        );
+
+        const playSessionId = data.PlaySessionId;
+        const mediaSources: EmbyMediaSource[] = data.MediaSources;
+        const urls: string[] = [];
+        const subs: Array<{ name: string; lang: string; format: string; url: string; }> = [];
+
+        // 🎯 查找转码或直连的 MediaSource
+        const targetSource = mediaSources.find(s => s.SupportsTranscoding) || mediaSources[0];
+        
+        if (!targetSource) {
+             throw new Error("No media source found for playback.");
+        }
+        
+        const mediaSourceId = targetSource.Id;
+        
+        // 2. POST Sessions/Playing/Progress (启动播放会话/心跳)
+        // 这一步是关键！它通知服务器启动转码。
+        await this.sendPlaybackStart(embyItemId, playSessionId, mediaSourceId);
+
+        // 3. 构造 M3U8 播放链接
+        // 注意：HLS/转码链接需要 PlaySessionId 和 MediaSourceId
+        const finalPlaybackUrl = this.config.url + `/emby/videos/${embyItemId}/master.m3u8?` + new URLSearchParams({
+            // 认证信息
+            'DeviceId': 'lunatv-web',
+            'api_key': this.accessToken || '',
+            // 播放会话信息
+            'MediaSourceId': mediaSourceId,
+            'PlaySessionId': playSessionId,
+            // 转码参数（确保与 DeviceProfile 匹配，Emby 会使用这些参数）
+            'VideoCodec': 'h264,hevc', 
+            'AudioCodec': 'aac',
+            'MaxAudioChannels': '6',
+            'Tag': targetSource.MediaStreams.find(s => s.Type === 'Video')?.Codec || '', // 视频Tag
+            'VideoBitrate': '40000000',
+            'MaxFramerate': '60',
+            'StartTimeTicks': '0',
+            'Static': 'true', // Emby/Jellyfin 网页端播放常用参数
+        }).toString();
+
+
+        urls.push(targetSource.Name);
+        urls.push(finalPlaybackUrl);
+
+        // 提取字幕
+        for (const stream of targetSource.MediaStreams) {
+            if (stream.Type === 'Subtitle' && stream.DeliveryUrl) {
+                subs.push({
+                    name: stream.DisplayTitle || stream.Language || 'Subtitle',
+                    lang: stream.Language || 'unknown',
+                    format: stream.Codec === 'ass' ? 'text/x-ssa' : 'application/x-subrip',
+                    url: this.config.url + stream.DeliveryUrl + `?api_key=${this.accessToken}` // 字幕也需要认证
+                });
+            }
+        }
+
+        return {
+            url: urls,
+            subs: subs,
+            // 播放链接已经包含了 api_key，但为了保险，仍可以发送 User-Agent
+            header: { 'User-Agent': this.config.userAgent || 'LunaTV/1.0' },
+            parse: 0,
+            // 💡 必须返回 PlaySessionId 和 MediaSourceId，供心跳使用！
+            extra: {
+                PlaySessionId: playSessionId,
+                MediaSourceId: mediaSourceId
+            }
+        };
+    }
+
+    /**
+     * 【新增】启动播放会话/发送第一次心跳
+     * 通知服务器播放已开始，启动转码进程。
+     */
+    private async sendPlaybackStart(itemId: string, playSessionId: string, mediaSourceId: string) {
+        const params = new URLSearchParams({
+            'PlaySessionId': playSessionId,
+            'MediaSourceId': mediaSourceId,
+            'CanSeek': 'true',
+            'IsPaused': 'false',
+            'PositionTicks': '0',
+            'PlaybackRate': '1',
+            'ItemIds': itemId,
+            'ClientName': 'LunaTV',
+            'DeviceName': 'Web',
+            'VolumeLevel': '100',
+            'SubtitleStreamIndex': '-1',
+            'AudioStreamIndex': '-1',
+        });
+
+        // 使用 POST /Sessions/Playing/Progress 接口作为播放开始标记
+        await this.fetch(`/emby/Sessions/Playing/Progress?${params}`, {
+            method: 'POST',
+        });
+    }
+
+    /**
+     * 【新增】持续发送播放进度（心跳）
+     * 保持转码进程活跃。
+     * ！！！注意：这个方法需要在您的播放器前端代码中循环调用！！！
+     */
+    public async sendPlaybackProgress(
+        itemId: string,
+        playSessionId: string,
+        mediaSourceId: string,
+        positionTicks: number = 0,
+        isPaused: boolean = false
+    ) {
+        const params = new URLSearchParams({
+            'PlaySessionId': playSessionId,
+            'MediaSourceId': mediaSourceId,
+            'PositionTicks': positionTicks.toString(),
+            'IsPaused': isPaused.toString(),
+            'PlaybackRate': '1',
+            'ItemIds': itemId,
+            'ClientName': 'LunaTV',
+            'DeviceName': 'Web',
+            'SubtitleStreamIndex': '-1',
+            'AudioStreamIndex': '-1',
+        });
+
+        await this.fetch(`/emby/Sessions/Playing/Progress?${params}`, {
+            method: 'POST',
+        });
+    }
 }
-    
