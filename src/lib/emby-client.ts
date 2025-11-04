@@ -414,19 +414,20 @@ async getFolderItems(folderId: string, page: number = 1) {
   /**  
    * 格式化电影详情 - 对应 getMovieDetail()  
    */  
-  private formatMovieDetail(item: EmbyItem) {  
-    return {  
-      vod_id: `${this.config.id}-${item.Id}`,  
-      vod_name: item.Type === 'Episode' ? item.SeriesName : item.Name,  
-      vod_pic: this.getImageUrl(item),  
-      vod_director: this.config.name,  
-      vod_remarks: item.CommunityRating?.toString() || '',  
-      vod_year: item.ProductionYear?.toString()  
-    }; 
+private formatMovieDetail(item: EmbyItem) {  
+  const result: any = {  
+    vod_id: `${this.config.id}-${item.Id}`,  
+    vod_name: item.Type === 'Episode' ? item.SeriesName : item.Name,  
+    vod_pic: this.getImageUrl(item),  
+    vod_director: this.config.name,  
+    vod_remarks: item.CommunityRating?.toString() || '',  
+    vod_year: item.ProductionYear?.toString()  
+  };  
+    
   // 添加文件夹类型检测  
   if (['Folder', 'CollectionFolder', 'MusicAlbum', 'BoxSet', 'Season'].includes(item.Type)) {  
     result.vod_tag = 'folder';  
-  }  
+  }   
     
   return result;  	
   }  
