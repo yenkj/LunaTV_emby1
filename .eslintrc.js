@@ -12,16 +12,11 @@ module.exports = {
     'plugin:@typescript-eslint/recommended',
     'prettier',
   ],
-  ignorePatterns: ['src/types/**/*.d.ts'],  
   rules: {
     'no-unused-vars': 'off',
-    'no-console': 'off',
+    'no-console': 'warn',
     '@typescript-eslint/explicit-module-boundary-types': 'off',
     'react/no-unescaped-entities': 'off',
-    //添加这三行
-    'react/jsx-no-undef': 'warn', 
-    '@typescript-eslint/no-inferrable-types': 'warn', 
-    '@typescript-eslint/adjacent-overload-signatures': 'warn',
     
     'react/display-name': 'off',
     'react/jsx-curly-brace-presence': [
