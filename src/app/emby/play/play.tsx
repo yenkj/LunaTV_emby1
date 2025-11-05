@@ -185,16 +185,18 @@ function EmbyPlayPageClient() {
     if (currentTime < 1 || !duration) return;
 
     try {
-      await savePlayRecord('emby', videoId, {
-        title: videoTitle,
-        source_name: 'Emby',
-        cover: '',
-        index: currentEpisodeIndex + 1,
-        total_episodes: episodes.length || 1,
-        play_time: Math.floor(currentTime),
-        total_time: Math.floor(duration),
-        save_time: Date.now(),
-      });
+          await savePlayRecord('emby', videoId, {  
+          title: videoTitle,  
+          source_name: 'Emby',  
+          cover: '', // 或者传入实际的封面 URL  
+          year: '', // 添加年份信息,如果有的话  
+          index: currentEpisodeIndex + 1, // 当前集数  
+          total_episodes: totalEpisodes, // 总集数  
+          play_time: Math.floor(currentTime), // 当前播放时间(秒)  
+          total_time: Math.floor(duration), // 总时长(秒)  
+          save_time: Date.now(),  
+          search_title: videoTitle, // 搜索标题,通常与 title 相同  
+        });
 
       lastSaveTimeRef.current = Date.now();
       console.log('本地播放进度已保存:', currentTime);
