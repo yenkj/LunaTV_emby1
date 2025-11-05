@@ -12,10 +12,11 @@ declare module '@/lib/artplayer-plugin-chromecast' {
 
   interface ChromecastPlugin {
     name: 'artplayerPluginChromecast';
-    getCastState: () => any;
+    getCastState: () => unknown; // <-- FIX 1: any -> unknown
     isCasting: () => boolean;
   }
 
-  function artplayerPluginChromecast(options?: ChromecastPluginOptions): (art: any) => Promise<ChromecastPlugin>;
+  // ArtPlayer 的实例类型不确定时，用 unknown 替换 any
+  function artplayerPluginChromecast(options?: ChromecastPluginOptions): (art: unknown) => Promise<ChromecastPlugin>; 
   export default artplayerPluginChromecast;
 }
