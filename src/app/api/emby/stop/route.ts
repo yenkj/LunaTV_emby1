@@ -61,8 +61,3 @@ export async function POST(request: NextRequest) {
     );  
   }  
 }
-      { error: `Failed to send stop signal: ${error instanceof Error ? error.message : 'Unknown Error'}` },
-      { status: 500 }
-    );
-  }
-}
