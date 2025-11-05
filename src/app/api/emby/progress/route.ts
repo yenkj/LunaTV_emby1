@@ -1,3 +1,13 @@
+import { NextRequest, NextResponse } from 'next/server';  
+import { getAuthInfoFromCookie } from '@/lib/auth';  
+import { getConfig } from '@/lib/config';  
+import { EmbyClient } from '@/lib/emby-client';  
+  
+export const runtime = 'nodejs';  
+  
+/**  
+ * 处理 Emby 播放进度/心跳请求  
+ */  
 export async function POST(request: NextRequest) {  
   // 1. 验证用户身份(只检查基本认证)  
   const authInfo = getAuthInfoFromCookie(request);  
