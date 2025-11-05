@@ -122,7 +122,20 @@ export class EmbyClient {
   }
 
   // --- 媒体库方法 (保持不变) ---
-  
+  async getFolderItems(folderId: string, page: number = 1) {  
+  const limit = 20;  
+  const startIndex = (page - 1) * limit;  
+    
+  const response = await this.fetch(  
+    `/emby/Users/${this.userId}/Items?ParentId=${folderId}&StartIndex=${startIndex}&Limit=${limit}`  
+  );  
+    
+  return {  
+    list: response.Items.map((item: EmbyItem) => this.formatMovieDetail(item)),  
+    page: page,  
+    pagecount: Math.ceil(response.TotalRecordCount / limit)  
+  };  
+}
   async getViews(): Promise<EmbyItem[]> { /* ... */ }
   async getHomeContent() { /* ... */ }
   async getCategories() { /* ... */ }
